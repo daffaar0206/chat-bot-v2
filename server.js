@@ -73,7 +73,7 @@ const AI_MODELS = [
   },
   {
     id: 'gemini-2.0-flash-exp',
-    name: 'Gemini Pro',
+    name: 'Gemini Flash 2.0',
     description: 'Advanced AI model by Google with image understanding',
     supportsImages: true
   },
@@ -102,7 +102,7 @@ const MODEL_HANDLERS = {
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
           headers: {
-            'Authorization': 'Bearer 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',
+            'Authorization': `Bearer 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`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -118,7 +118,7 @@ const MODEL_HANDLERS = {
         if (!response.ok) {
           const errorData = await response.json();
           console.error('Groq API error:', errorData);
-          throw new Error(JSON.stringify(errorData));
+          throw new Error(JSON.stringify({ error: errorData }));
         }
 
         const data = await response.json();
@@ -126,13 +126,13 @@ const MODEL_HANDLERS = {
 
         if (!data.choices || !data.choices[0] || !data.choices[0].message) {
           console.error('Unexpected API response:', data);
-          throw new Error('Invalid response format from Groq API');
+          throw new Error(JSON.stringify({ error: 'Invalid response format from Groq API' }));
         }
 
         return data.choices[0].message.content;
       } catch (error) {
         console.error('Error in Groq handler:', error);
-        throw error;
+        throw new Error(JSON.stringify({ error: error.message || 'Failed to get response from Groq API' }));
       }
     }
   },
@@ -170,7 +170,7 @@ const MODEL_HANDLERS = {
         return completion.choices[0].message.content;
       } catch (error) {
         console.error('Error in XAI handler:', error);
-        throw error;
+        throw new Error(JSON.stringify({ error: error.message || 'Failed to get response from XAI API' }));
       }
     }
   },
@@ -200,7 +200,7 @@ const MODEL_HANDLERS = {
         }
       } catch (error) {
         console.error('Error in Gemini handler:', error);
-        throw error;
+        throw new Error(JSON.stringify({ error: error.message || 'Failed to get response from Gemini API' }));
       }
     }
   },
@@ -248,10 +248,9 @@ const MODEL_HANDLERS = {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'HTTP-Referer': 'http://localhost:3000',
+            'Content-Type': 'application/json',
             'X-Title': '4D GPT',
             'OR-SITE-URL': 'http://localhost:3000',
-            'Content-Type': 'application/json'
           },
           body: JSON.stringify(requestBody)
         });
@@ -264,23 +263,26 @@ const MODEL_HANDLERS = {
             headers: Object.fromEntries(response.headers.entries()),
             error: errorData
           });
-          throw new Error(JSON.stringify(errorData));
+          throw new Error(JSON.stringify({ error: errorData }));
         }
 
         const data = await response.json();
         if (!data.choices || !data.choices[0] || !data.choices[0].message) {
           console.error('Unexpected API response:', data);
-          throw new Error('Invalid response format from OpenRouter API');
+          throw new Error(JSON.stringify({ error: 'Invalid response format from OpenRouter API' }));
         }
 
         return data.choices[0].message.content;
       } catch (error) {
         console.error('Error in LearnLM handler:', error);
-        throw error;
+        throw new Error(JSON.stringify({ error: error.message || 'Failed to get response from LearnLM API' }));
       }
     }
   }
 };
+
+// In-memory store for chat history
+const chatHistory = {};
 
 // Endpoint to get available AI models
 app.get('/api/models', (req, res) => {
@@ -317,7 +319,7 @@ app.get('/api/models', (req, res) => {
 // Chat endpoint
 app.post('/api/chat', upload.single('image'), async (req, res) => {
   try {
-    const { message } = req.body;
+    const { message, sessionId } = req.body;
     const model = req.body.model || 'llama-3.3-70b';
     const image = req.file;
 
@@ -325,7 +327,9 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'Message is required' });
     }
 
-    const messages = [{ role: 'user', content: message }];
+    // Get chat history for the session
+    const messages = chatHistory[sessionId] || [];
+    messages.push({ role: 'user', content: message });
 
     try {
       let response;
@@ -356,6 +360,10 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
           return res.status(400).json({ error: 'Invalid model selected' });
       }
 
+      // Add AI response to chat history
+      messages.push({ role: 'assistant', content: response });
+      chatHistory[sessionId] = messages;
+
       // Stream the response character by character
       res.setHeader('Content-Type', 'text/plain');
       res.setHeader('Transfer-Encoding', 'chunked');
@@ -385,7 +393,7 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
   }
 });
 
-app.use(express.static('dist'));
+app.use(express.static('public'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

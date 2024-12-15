@@ -31,7 +31,7 @@ const DEFAULT_MODELS = [
   },
   {
     id: 'gemini-2.0-flash-exp',
-    name: 'Gemini Pro',
+    name: 'Gemini 2.0 Flash',
     supportsImages: true
   },
   {

@@ -137,7 +137,7 @@ function Chat({ selectedModel }) {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSubmit();
+      handleSubmit(e);
     }
   };
 
@@ -157,6 +157,7 @@ function Chat({ selectedModel }) {
     addMessage(userMessage);
     scrollToBottom();
 
+    let aiMessage;
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
@@ -166,7 +167,7 @@ function Chat({ selectedModel }) {
         body: JSON.stringify({
           message: input.trim(),
           model: selectedModel,
-          messages: currentSession?.messages || []
+          sessionId: currentSession?.id
         }),
       });
 
@@ -176,7 +177,7 @@ function Chat({ selectedModel }) {
       }
 
       // Create a new message for streaming
-      const aiMessage = {
+      aiMessage = {
         id: Date.now().toString(),
         role: 'assistant',
         content: '',
