@@ -73,7 +73,7 @@ const AI_MODELS = [
   },
   {
     id: 'gemini-2.0-flash-exp',
-    name: 'Gemini Flash 2.0',
+    name: 'Gemini 2.0 flash',
     description: 'Advanced AI model by Google with image understanding',
     supportsImages: true
   },
