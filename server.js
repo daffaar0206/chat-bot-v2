@@ -97,7 +97,14 @@ const MODEL_HANDLERS = {
           });
         }
 
+        if (!messages || messages.length === 0) {
+          throw new Error(JSON.stringify({ error: 'No messages provided to Llama API' }));
+        }
+
         console.log('Sending request to Groq with messages:', messages);
+
+        // Add a temporary message to indicate AI is thinking
+        messages.push({ role: 'assistant', content: 'AI is thinking...' });
 
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
@@ -139,9 +146,7 @@ const MODEL_HANDLERS = {
   'xai-grok': {
     async handle(messages) {
       try {
-        // Debug log for API key
-        console.log('Using XAI API key:', process.env.XAI_API_KEY ? 'Present' : 'Missing');
-
+        
         const xai = new OpenAI({
           apiKey: process.env.XAI_API_KEY,
           baseURL: "https://api.x.ai/v1"
@@ -364,24 +369,48 @@ app.post('/api/chat', upload.single('image'), async (req, res) => {
       messages.push({ role: 'assistant', content: response });
       chatHistory[sessionId] = messages;
 
-      // Stream the response character by character
+      // Stream the response
       res.setHeader('Content-Type', 'text/plain');
       res.setHeader('Transfer-Encoding', 'chunked');
       
-      // Stream in larger chunks for faster response
-      const chunkSize = 8; // Send 8 characters at a time
-      const chars = response.split('');
-      
-      for (let i = 0; i < chars.length; i += chunkSize) {
-        const chunk = chars.slice(i, i + chunkSize).join('');
-        res.write(chunk);
-        // Minimal delay to prevent overwhelming the client
-        if (i % 32 === 0) { // Add tiny delay every 32 characters
-          await new Promise(resolve => setTimeout(resolve, 1));
+      // Add a small delay before sending the first chunk
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          const chunkSize = 256;
+          for (let i = 0; i < response.length; i += chunkSize) {
+            const chunk = response.slice(i, i + chunkSize);
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        },
+        cancel(reason) {
+          console.error('Streaming cancelled:', reason);
         }
-      }
+      });
+
+      const reader = stream.getReader();
       
-      res.end();
+      const processStream = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            res.write(value);
+          }
+        } catch (error) {
+          console.error('Error during streaming:', error);
+          res.write(JSON.stringify({ error: error.message || 'Error during streaming' }));
+        } finally {
+          res.end();
+        }
+      };
+
+      processStream();
 
     } catch (error) {
       console.error(`Error with ${model}:`, error);

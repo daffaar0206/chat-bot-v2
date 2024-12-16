@@ -12,6 +12,9 @@ import remarkGfm from 'remark-gfm';
 import { useSession } from '../contexts/SessionContext';
 import ChatMessage from './ChatMessage';
 import InputAdornment from '@mui/material/InputAdornment';
+import MicIcon from '@mui/icons-material/Mic';
+import MicOffIcon from '@mui/icons-material/MicOff';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 
 function CodeBlock({ content, language }) {
   const [copied, setCopied] = useState(false);
@@ -57,11 +60,60 @@ function CodeBlock({ content, language }) {
 function Chat({ selectedModel }) {
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
+  const formRef = useRef(null);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [newMessageId, setNewMessageId] = useState(null);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const [isThinking, setIsThinking] = useState(false);
+  const [streamingMessageId, setStreamingMessageId] = useState(null);
+  const [isListening, setIsListening] = useState(false);
+  const [recognition, setRecognition] = useState(null);
   const { currentSession, addMessage, generateSessionTitle } = useSession();
+
+  useEffect(() => {
+    // Initialize speech recognition
+    if ('webkitSpeechRecognition' in window) {
+      const recognition = new window.webkitSpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+          .map(result => result[0])
+          .map(result => result.transcript)
+          .join('');
+        
+        setInput(transcript);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      setRecognition(recognition);
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognition) {
+      console.error('Speech recognition not supported');
+      return;
+    }
+
+    if (isListening) {
+      recognition.stop();
+      setIsListening(false);
+    } else {
+      recognition.start();
+      setIsListening(true);
+    }
+  };
 
   const scrollToBottom = () => {
     if (chatContainerRef.current) {
@@ -134,15 +186,14 @@ function Chat({ selectedModel }) {
     ),
   };
 
-  const handleKeyPress = (e) => {
+  const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
+      e.preventDefault(); // Prevent form submission/page reload
       handleSubmit(e);
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     if (!input.trim() || isProcessing) return;
 
     const userMessage = {
@@ -157,8 +208,9 @@ function Chat({ selectedModel }) {
     addMessage(userMessage);
     scrollToBottom();
 
-    let aiMessage;
+    let aiMessage = null;
     try {
+      setIsThinking(true); // Set isThinking to true before fetch
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -183,8 +235,8 @@ function Chat({ selectedModel }) {
         content: '',
         timestamp: new Date().toISOString()
       };
+      setStreamingMessageId(aiMessage.id);
       addMessage(aiMessage);
-      setNewMessageId(aiMessage.id);
 
       // Read the stream
       const reader = response.body.getReader();
@@ -216,105 +268,200 @@ function Chat({ selectedModel }) {
       
     } catch (error) {
       console.error('Error:', error);
-      addMessage({
-        ...aiMessage,
-        content: `Error: ${error.message}`
-      });
+      if (aiMessage) {
+        addMessage({
+          ...aiMessage,
+          content: `Error: ${error.message}`
+        });
+      } else {
+        console.error('aiMessage is undefined in catch block', error);
+      }
     } finally {
+      setStreamingMessageId(null);
       setIsProcessing(false);
+      setIsThinking(false); // Set isThinking to false after response
       if (currentSession?.messages.length === 0) {
         generateSessionTitle(currentSession.id);
       }
     }
   };
 
-  return (
-    <Box sx={{ 
-      height: '100%', 
-      display: 'flex', 
+  const styles = {
+    root: {
+      display: 'flex',
+      height: '100vh',
+      backgroundColor: '#1A1512',
+    },
+    sidebar: {
+      width: 280,
+      flexShrink: 0,
+      backgroundColor: '#201A15',
+      borderRight: '1px solid rgba(184,127,95,0.1)',
+      display: 'flex',
       flexDirection: 'column',
-      overflow: 'hidden'
-    }}>
-      <Box
-        ref={chatContainerRef}
-        sx={{
-          flex: 1,
-          overflowY: 'auto',
-          p: { xs: 1, sm: 2 },
-          maxWidth: '100%',
-          margin: '0 auto',
-          scrollBehavior: 'smooth',
-          '&::-webkit-scrollbar': {
-            width: { xs: '4px', sm: '8px' }
-          },
-          '&::-webkit-scrollbar-track': {
-            background: 'transparent'
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: 'rgba(255,255,255,0.1)',
-            borderRadius: '4px'
-          },
-          '&::-webkit-scrollbar-thumb:hover': {
-            background: 'rgba(255,255,255,0.2)'
-          }
-        }}
-        onScroll={handleScroll}
-      >
-        {currentSession?.messages.map((message, index) => (
-          <ChatMessage
-            key={message.id || index}
-            message={message}
-            isNew={isProcessing && index === currentSession.messages.length - 1}
-            markdownComponents={markdownComponents}
-          />
-        ))}
-        <div ref={messagesEndRef} style={{ height: '20px' }} />
-      </Box>
+    },
+    sidebarHeader: {
+      padding: '20px',
+      borderBottom: '1px solid rgba(184,127,95,0.1)',
+    },
+    modelSelect: {
+      backgroundColor: '#2D2419',
+      color: '#E6D5C5',
+      border: '1px solid rgba(184,127,95,0.2)',
+      borderRadius: '8px',
+      '&:hover': {
+        backgroundColor: '#362C1F'
+      }
+    },
+    newChatButton: {
+      backgroundColor: '#B87F5F',
+      color: '#1A1512',
+      margin: '20px',
+      '&:hover': {
+        backgroundColor: '#A06A4C'
+      }
+    },
+    chatList: {
+      flex: 1,
+      overflow: 'auto',
+      padding: '10px',
+      '& .MuiListItem-root': {
+        borderRadius: '8px',
+        marginBottom: '4px',
+        color: '#E6D5C5',
+        '&:hover': {
+          backgroundColor: '#2D2419'
+        }
+      }
+    }
+  };
 
-      <Box
-        component="form"
-        onSubmit={handleSubmit}
-        sx={{
-          p: { xs: 1, sm: 2 },
-          borderTop: 1,
-          borderColor: 'divider',
-          backgroundColor: 'background.paper'
-        }}
-      >
-        <TextField
-          multiline
-          maxRows={4}
-          fullWidth
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyPress}
-          placeholder="Type a message..."
-          disabled={isProcessing}
+  return (
+    <Box sx={styles.root}>
+      <Box sx={styles.sidebar}>
+        {/* Sidebar content */}
+      </Box>
+      <Box sx={{ flex: 1 }}>
+        <Box
+          ref={chatContainerRef}
           sx={{
-            '& .MuiInputBase-root': {
-              p: { xs: 1, sm: 1.5 },
-              fontSize: { xs: '0.9rem', sm: '1rem' }
-            }
+            flex: 1,
+            overflow: 'auto',
+            pt: 2,
+            pb: 10,
+            backgroundColor: '#1A1512', // Dark brown background
+            '&::-webkit-scrollbar': {
+              width: '8px',
+            },
+            '&::-webkit-scrollbar-track': {
+              backgroundColor: '#201A15',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              backgroundColor: '#B87F5F',
+              borderRadius: '4px',
+            },
           }}
-          InputProps={{
-            endAdornment: (
-              <InputAdornment position="end">
-                <IconButton 
-                  type="submit" 
-                  disabled={isProcessing || !input.trim()}
-                  sx={{ 
-                    p: { xs: 0.5, sm: 1 },
-                    '& .MuiSvgIcon-root': {
-                      fontSize: { xs: '1.2rem', sm: '1.5rem' }
-                    }
-                  }}
-                >
-                  <SendIcon />
-                </IconButton>
-              </InputAdornment>
-            )
+          onScroll={handleScroll}
+        >
+          {currentSession?.messages.map((message, index) => (
+            <ChatMessage
+              key={message.id || index}
+              message={message}
+              isNew={message.id === streamingMessageId}
+              isThinking={isThinking && index === currentSession.messages.length - 1 && message.role === 'assistant'}
+              markdownComponents={markdownComponents}
+            />
+          ))}
+          <div ref={messagesEndRef} style={{ height: '20px' }} />
+        </Box>
+
+        <Box
+          component="div"
+          sx={{
+            position: 'fixed',
+            bottom: 0,
+            left: 0,
+            right: 0,
+            p: { xs: 1, sm: 2 },
+            backgroundColor: '#201A15', // Slightly darker brown
+            backdropFilter: 'blur(10px)',
+            borderTop: '1px solid rgba(184,127,95,0.2)'
           }}
-        />
+        >
+          <Box
+            sx={{
+              maxWidth: '800px',
+              margin: '0 auto',
+              position: 'relative',
+              width: '100%',
+              px: { xs: 1, sm: 2 }
+            }}
+          >
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                backgroundColor: '#2D2419', // Medium brown
+                borderRadius: '16px', // More rounded corners
+                padding: { xs: '8px 12px', sm: '10px 15px' },
+                gap: '10px',
+                border: '1px solid rgba(184,127,95,0.2)'
+              }}
+            >
+              <IconButton 
+                size="small" 
+                onClick={toggleListening}
+                sx={{ 
+                  color: isListening ? '#B87F5F' : 'rgba(255,255,255,0.6)',
+                  '&:hover': {
+                    color: isListening ? '#B87F5F' : 'rgba(255,255,255,0.8)'
+                  }
+                }}
+              >
+                {isListening ? <MicIcon /> : <MicOffIcon />}
+              </IconButton>
+              
+              <TextField
+                fullWidth
+                variant="standard"
+                placeholder="Message ChatGPT"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                InputProps={{
+                  disableUnderline: true,
+                  style: { 
+                    color: '#fff',
+                    fontSize: '16px',
+                  }
+                }}
+                sx={{
+                  '& .MuiInputBase-root': {
+                    padding: '4px 8px',
+                    fontSize: { xs: '14px', sm: '16px' }
+                  }
+                }}
+              />
+              
+              <IconButton 
+                size="small"
+                disabled={!input.trim()}
+                onClick={handleSubmit}
+                sx={{ 
+                  color: input.trim() ? '#B87F5F' : 'rgba(255,255,255,0.4)',
+                  backgroundColor: input.trim() ? 'rgba(184,127,95,0.1)' : 'transparent',
+                  borderRadius: '8px',
+                  padding: { xs: '6px', sm: '8px' },
+                  '&:hover': {
+                    backgroundColor: input.trim() ? 'rgba(184,127,95,0.2)' : 'transparent'
+                  }
+                }}
+              >
+                <SendIcon />
+              </IconButton>
+            </Box>
+          </Box>
+        </Box>
       </Box>
     </Box>
   );
